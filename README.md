@@ -1,7 +1,9 @@
 ![LangChain](img/langchain.jpeg)
 
-Ce projet a pour but de proposer une démonstration pédagogique de l'utilisation de **LangChain** pour construire une application de type **RAG (Retrieval-Augmented Generation)**.  
-Il est destiné à un public souhaitant apprendre à combiner LLMs et recherche de documents afin de créer des agents capables de répondre à partir de sources personnalisées.
+Ce projet a pour but de proposer une démonstration pédagogique de l'utilisation de **LangChain**
+pour construire une application de type **RAG (Retrieval-Augmented Generation)**.
+Il est destiné à un public souhaitant apprendre à combiner LLMs et recherche de documents
+afin de créer des agents capables de répondre à partir de sources personnalisées.
 
 ## Objectifs pédagogiques
 
@@ -22,7 +24,7 @@ Il est destiné à un public souhaitant apprendre à combiner LLMs et recherche 
 1. Clonez le dépôt :
 
    ```bash
-   git clone https://github.com/
+   git clone https://github.com/maxime-lenne/course-langchain-rag     
    cd rag
    ```
 
