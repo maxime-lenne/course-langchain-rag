@@ -44,7 +44,11 @@ afin de créer des agents capables de répondre à partir de sources personnalis
 4. Lancez le notebook :
 
    ```bash
-   jupyter notebook
+   # Version Jupyter
+   jupyter notebook langchain.ipynb
+
+   # Version Marimo (alternative moderne)
+   marimo run langchain_marimo.py
    ```
 
 ## Structure du projet
