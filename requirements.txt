@@ -1,7 +1,8 @@
 langchain
 langchain-community
-langchain-openai
-langchain-deepseek
+langchain-mistralai
 langchain-ollama
+langchain-chroma
 chromadb
+jupyter
 marimo

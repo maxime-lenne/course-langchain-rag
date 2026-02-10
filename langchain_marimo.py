@@ -62,20 +62,24 @@ def __():
     import os
     from dotenv import load_dotenv
     from langchain_ollama import ChatOllama, OllamaEmbeddings
-    from langchain_core.messages import SystemMessage, HumanMessage
+    from langchain_core.messages import HumanMessage, AIMessage
+    from langchain_core.output_parsers import StrOutputParser
+    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+    from langchain_core.runnables import RunnablePassthrough
     from langchain_text_splitters import RecursiveCharacterTextSplitter
     from langchain_community.document_loaders import TextLoader
-    from langchain_community.vectorstores import Chroma
-    from langchain.chains import ConversationalRetrievalChain
+    from langchain_chroma import Chroma  # ✅ LangChain v1 : pip install langchain-chroma
 
     load_dotenv(override=True)
 
     model = ChatOllama(model="llama3", temperature=0)
     embedder = OllamaEmbeddings(model="nomic-embed-text")
     return (
-        os, load_dotenv, model, embedder, ChatOllama, OllamaEmbeddings,
-        SystemMessage, HumanMessage, RecursiveCharacterTextSplitter,
-        TextLoader, Chroma, ConversationalRetrievalChain
+        os, load_dotenv, model, embedder,
+        ChatOllama, OllamaEmbeddings,
+        HumanMessage, AIMessage,
+        StrOutputParser, ChatPromptTemplate, MessagesPlaceholder, RunnablePassthrough,
+        RecursiveCharacterTextSplitter, TextLoader, Chroma,
     )
 
 
@@ -166,7 +170,17 @@ def __(db_dir, embedder, Chroma):
 
 @app.cell
 def __(mo):
-    mo.md("### 2.4 Interface de recherche")
+    mo.md(
+        """
+        ### 2.4 Exécution d'une requête de recherche
+
+        Le pipeline est composé de 4 étapes enchaînées avec l'opérateur `|` :
+        1. **Récupération** : le retriever cherche les chunks pertinents et une fonction les formate
+        2. **Prompt** : le contexte et la question sont injectés dans un template structuré
+        3. **LLM** : le modèle génère une réponse à partir du prompt enrichi
+        4. **Parser** : la sortie brute est convertie en chaîne de caractères simple
+        """
+    )
     return
 
 
@@ -183,26 +197,31 @@ def __(mo):
 
 
 @app.cell
-def __(mo, model, retriever, query_input, SystemMessage, HumanMessage):
+def __(mo, model, retriever, query_input, ChatPromptTemplate, RunnablePassthrough, StrOutputParser):
     if query_input.value:
-        # Recherche des chunks pertinents
-        relevant_chunks = retriever.invoke(query_input.value)
+        # Fonction de formatage des documents
+        def _format_docs(docs):
+            return "\n\n".join(doc.page_content for doc in docs)
 
-        # Construction du message
-        input_message = (
-            "Voici des documents qui vont t'aider à répondre à la question : "
-            + query_input.value
-            + "\n\nDocuments pertinents : \n"
-            + "\n\n".join([chunk.page_content for chunk in relevant_chunks])
-            + "\n\nDonne une réponse basée uniquement sur les documents fournis."
+        # Template du prompt
+        _prompt = ChatPromptTemplate.from_messages([
+            ("system",
+             "Tu es un assistant qui aide à retrouver tout type d'informations interne à une entreprise. "
+             "Réponds uniquement en te basant sur les documents fournis. "
+             "Si l'information n'est pas dans les documents, dis-le clairement."),
+            ("human", "Documents pertinents :\n\n{context}\n\nQuestion : {question}")
+        ])
+
+        # Chaîne RAG avec LCEL
+        rag_chain = (
+            {"context": retriever | _format_docs, "question": RunnablePassthrough()}
+            | _prompt
+            | model
+            | StrOutputParser()
         )
 
-        messages = [
-            SystemMessage(content="Tu es un assistant qui aide à retrouver des informations internes."),
-            HumanMessage(content=input_message)
-        ]
+        result = rag_chain.invoke(query_input.value)
 
-        result = model.invoke(messages)
         mo.md(f"""
         **Question :** {query_input.value}
 
@@ -210,7 +229,7 @@ def __(mo, model, retriever, query_input, SystemMessage, HumanMessage):
 
         **Réponse :**
 
-        {result.content}
+        {result}
         """)
     return
 
@@ -249,15 +268,15 @@ def __(mo):
         """
         # 3. RAG conversationnel
 
-        Le **RAG conversationnel** ajoute une étape clé : la **reformulation de la question**
-        en prenant en compte l'historique du dialogue.
+        Le **RAG conversationnel** maintient un historique de la conversation pour
+        permettre des questions de suivi implicites (ex. "Et lui ?").
 
-        **Exemple :**
-        - Utilisateur : *Qui est le CEO de Tesla ?*
-        - IA : *Elon Musk*
-        - Utilisateur : *Et de SpaceX ?*
+        **Approche LCEL avec historique explicite :**
+        On utilise un `MessagesPlaceholder` dans le prompt pour injecter l'historique
+        (`chat_history`) à chaque tour. La liste est mise à jour manuellement
+        après chaque échange (`HumanMessage` / `AIMessage`).
 
-        → La question "Et de SpaceX ?" est reformulée en "Qui est le CEO de SpaceX ?"
+        > 💡 Pour une mémoire persistante multi-sessions, voir `rag.ipynb`.
         """
     )
     return
@@ -265,9 +284,9 @@ def __(mo):
 
 @app.cell
 def __(mo):
-    # État pour l'historique de conversation
-    chat_history_state = mo.state([])
-    return (chat_history_state,)
+    # État pour l'historique de conversation (persistant entre les re-exécutions Marimo)
+    get_history, set_history = mo.state([])
+    return get_history, set_history
 
 
 @app.cell
@@ -281,26 +300,54 @@ def __(mo):
 
 
 @app.cell
-def __(mo, model, db, chat_query, ConversationalRetrievalChain):
-    # Chaîne RAG conversationnelle
-    qa_chain = ConversationalRetrievalChain.from_llm(
-        llm=model,
-        retriever=db.as_retriever()
-    )
-
-    # Historique simple (non persistant entre les cellules pour la démo)
-    chat_history = []
-
+def __(mo, model, retriever, chat_query, get_history, set_history,
+       ChatPromptTemplate, MessagesPlaceholder, StrOutputParser,
+       HumanMessage, AIMessage):
     if chat_query.value:
-        result_chat = qa_chain({"question": chat_query.value, "chat_history": chat_history})
+        # Prompt avec historique de conversation
+        _prompt_conv = ChatPromptTemplate.from_messages([
+            ("system",
+             "Tu es un assistant qui aide à retrouver tout type d'informations interne à une entreprise. "
+             "Réponds uniquement en te basant sur les documents fournis. "
+             "Si l'information n'est pas dans les documents, dis-le clairement."),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "Documents pertinents :\n\n{context}\n\nQuestion : {question}")
+        ])
+
+        # Chaîne RAG conversationnelle avec LCEL
+        _chain = (
+            {
+                "context": lambda x: "\n\n".join(
+                    doc.page_content for doc in retriever.invoke(x["question"])
+                ),
+                "question": lambda x: x["question"],
+                "chat_history": lambda x: x["chat_history"]
+            }
+            | _prompt_conv
+            | model
+            | StrOutputParser()
+        )
+
+        _result = _chain.invoke({
+            "question": chat_query.value,
+            "chat_history": get_history()
+        })
+
+        # Mise à jour de l'historique
+        _new_history = get_history() + [
+            HumanMessage(content=chat_query.value),
+            AIMessage(content=_result)
+        ]
+        set_history(_new_history)
+
         mo.md(f"""
         **Vous :** {chat_query.value}
 
-        **Assistant :** {result_chat["answer"]}
+        **Assistant :** {_result}
         """)
     else:
         mo.md("*Posez une question pour commencer*")
-    return qa_chain, chat_history
+    return
 
 
 @app.cell
@@ -310,11 +357,11 @@ def __(mo):
         ## Exercice 2
 
         Repartez de l'exercice NovTech et implémentez un assistant de conversation continue
-        avec `ConversationalRetrievalChain`.
+        avec la chaîne LCEL + `MessagesPlaceholder`.
 
         L'assistant doit pouvoir :
         - Se souvenir des questions précédentes
-        - Reformuler automatiquement les questions implicites
+        - Utiliser le contexte de l'historique pour des questions de suivi implicites
         """
     )
     return
