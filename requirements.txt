@@ -4,5 +4,6 @@ langchain-mistralai
 langchain-ollama
 langchain-chroma
 chromadb
+langgraph
 jupyter
 marimo
